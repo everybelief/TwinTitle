@@ -1,0 +1,7 @@
+{
+  "fofa_key": "在这里填你的 FOFA API KEY",
+  "fofa_mode": "official",
+  "fofa_interval": 4,
+  "proxy": "http://127.0.0.1:7897",
+  "proxy_enable": false
+}

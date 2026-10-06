@@ -1,0 +1,29 @@
+工具名称：TwinTitle（同题猎手）
+作品包：本目录即可运行，测绘/探活/备案都走 tools\ 随包文件。
+仓库说明：README.md
+
+启动
+  1. Python 3.8+（带 tkinter）
+  2. pip install -r requirements.txt
+  3. 双击 启动.bat，右上角「配置」填 FOFA Key（代理选填），点「探测是否有效」再保存
+  4. 也可手改 config.json
+
+httpx / curl / FOFA / 备案都在 tools\ 里，界面不展示。缺文件时底栏会提示。
+
+必填：公司名称（全称即可）
+可空：官网根域 / URL / 别名 / 关键字（程序会反查根域、探官网、fuzz 标题、改后缀看是否注册）
+步骤：公开备案反查公司全称根域 → 拼接 www/apex 探官网 → 用官网标题 fuzz → FOFA 精确/关键字 → 别名后缀是否注册及标题
+反查根域走 https://icplishi.com/company/公司全称/ （公开 HTML，不用部署任何服务）。不要用爱企查/ENScan，也不要把邮箱、0.0.0.0 当成根域。
+Clash TUN 的 198.18 假 IP 不算存活；标题不含公司/关键字的资讯中心、邮箱模板不进表。官网只保留一条活体。
+判定：可疑钓鱼 / 可疑-被拦 / 可疑-不通 / 需人工 / 测绘过期 / 博彩/冒备案 / 自有 / 排除
+导出：xlsx 三张表（结果 / 分析 / 查询语句），默认 out\
+
+随包工具
+  tools\httpx.exe              批量探活
+  tools\curl.exe               钉测绘 IP 探活
+  tools\lib\fofa_api.py        FOFA 官方测绘
+  tools\lib\domain_icp.py      chinaz 备案（域名→备案号）
+公开接口
+  icplishi.com/company/        公司名→备案根域，无需部署
+
+Hunter / Quake / WHOIS 本工具不做。

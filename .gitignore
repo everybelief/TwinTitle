@@ -1,0 +1,14 @@
+config.json
+last_config.json
+out/
+__pycache__/
+*.pyc
+*.pyo
+crash.log
+.DS_Store
+Thumbs.db
+~$*.xlsx
+.idea/
+.vscode/
+venv/
+.venv/
