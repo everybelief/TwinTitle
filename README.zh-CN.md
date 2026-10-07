@@ -13,6 +13,10 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">中文</a> · <a href="CHANGELOG.md">更新日志</a>
 </p>
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="TwinTitle 运行界面">
+</p>
+
 ---
 
 ## 这是什么
@@ -168,6 +172,7 @@ TwinTitle/
   config.example.json    配置模板
   requirements.txt
   assets/linshen.ico     林神品牌图标
+  assets/screenshot.png  运行截图
   tools/
     httpx.exe            批量探活（projectdiscovery 1.2.4）
     curl.exe             钉测绘 IP 探活（TUN 污染 DNS 时）

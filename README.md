@@ -17,6 +17,10 @@
   <a href="README.md">English</a> · <a href="README.zh-CN.md">中文</a> · <a href="CHANGELOG.md">Changelog</a>
 </p>
 
+<p align="center">
+  <img src="assets/screenshot.png" alt="TwinTitle GUI">
+</p>
+
 ---
 
 ## What it is
@@ -170,6 +174,7 @@ TwinTitle/
   config.example.json    Config template
   requirements.txt
   assets/linshen.ico     Brand icon (林神)
+  assets/screenshot.png  GUI screenshot
   tools/
     httpx.exe            Live probe (projectdiscovery 1.2.4)
     curl.exe             Pin FOFA IP when TUN poisons DNS
