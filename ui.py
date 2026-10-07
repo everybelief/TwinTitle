@@ -2,16 +2,18 @@
 """公司标题钓鱼排查 GUI。FOFA 精确 title → 探活 → 备案 → 后缀/关键字扩搜。"""
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import queue
+import shutil
 import sys
 import threading
 import traceback
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from tkinter import BooleanVar, Button, Canvas, Frame, IntVar, Label, PhotoImage, StringVar, Tk, Toplevel, filedialog, messagebox, ttk
+from tkinter import BooleanVar, Button, Frame, IntVar, Label, PhotoImage, StringVar, Tk, Toplevel, filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from engine import (
@@ -20,6 +22,7 @@ from engine import (
     HuntConfig,
     TitlePhishEngine,
     export_xlsx,
+    group_hits,
     load_runtime,
     probe_settings,
     save_runtime,
@@ -39,7 +42,6 @@ SLOGANS = [
     "今天能打穿，明天仍从零开始",
     "得意时当小白，翻车时才懂敬畏",
 ]
-SLOGAN_GAP = "          ◆          "
 VERDICT_ORDER = [
     "可疑钓鱼", "可疑-被拦", "可疑-不通", "需人工",
     "测绘过期", "博彩/冒备案", "自有", "排除",
@@ -92,10 +94,10 @@ class SettingsDialog:
         self.fofa_key = StringVar(value=rt.get("fofa_key") or "")
         self.fofa_mode = StringVar(value=rt.get("fofa_mode") or "official")
         try:
-            iv = int(float(rt.get("fofa_interval") or 4))
+            iv = int(float(rt.get("fofa_interval") or 2))
         except (TypeError, ValueError):
-            iv = 4
-        self.fofa_interval = IntVar(value=iv if iv >= 2 else 4)
+            iv = 2
+        self.fofa_interval = IntVar(value=iv if iv >= 1 else 2)
         self.proxy = StringVar(value=rt.get("proxy") or "http://127.0.0.1:7897")
         self.proxy_enable = BooleanVar(value=bool(rt.get("proxy_enable")))
         self.show_key = BooleanVar(value=False)
@@ -129,7 +131,7 @@ class SettingsDialog:
             side="left", ipady=4
         )
         ttk.Label(mode_fr, text="间隔秒").pack(side="left", padx=(20, 8))
-        ttk.Spinbox(mode_fr, from_=2, to=15, increment=1, width=8, textvariable=self.fofa_interval).pack(side="left", ipady=4)
+        ttk.Spinbox(mode_fr, from_=1, to=8, increment=1, width=8, textvariable=self.fofa_interval).pack(side="left", ipady=4)
 
         ttk.Label(form, text="代理", width=12).grid(row=2, column=0, sticky="e", padx=(0, 12), pady=10)
         ttk.Entry(form, textvariable=self.proxy, font=font).grid(row=2, column=1, sticky="ew", pady=10, ipady=6)
@@ -197,9 +199,9 @@ class SettingsDialog:
 
     def _save(self) -> None:
         try:
-            interval = float(self.fofa_interval.get() or 4)
+            interval = float(self.fofa_interval.get() or 2)
         except (TypeError, ValueError):
-            interval = 4.0
+            interval = 2.0
         save_runtime({
             "fofa_key": (self.fofa_key.get() or "").strip(),
             "fofa_mode": (self.fofa_mode.get() or "official").strip() or "official",
@@ -256,14 +258,34 @@ class SettingsDialog:
 
 def _dpi() -> None:
     try:
-        from ctypes import windll
-        windll.shcore.SetProcessDpiAwareness(1)
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         try:
-            from ctypes import windll
-            windll.user32.SetProcessDPIAware()
+            ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass
+
+
+def _set_app_id() -> None:
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("linshen.TwinTitle")
+    except Exception:
+        pass
+
+
+def _ascii_ico() -> str:
+    """Tk iconbitmap 吃不了中文路径，拷到 LOCALAPPDATA。"""
+    src = ASSETS / "linshen.ico"
+    if not src.is_file():
+        return ""
+    dst = Path(os.environ.get("LOCALAPPDATA") or ".") / "TwinTitle" / "linshen.ico"
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if (not dst.is_file()) or dst.stat().st_size != src.stat().st_size or dst.stat().st_mtime < src.stat().st_mtime:
+            shutil.copy2(src, dst)
+        return str(dst)
+    except OSError:
+        return str(src)
 
 
 class App:
@@ -278,11 +300,10 @@ class App:
         self.result: dict | None = None
         self.running = False
 
-        self.title_var = StringVar()
         self.official_var = StringVar()
         self.url_var = StringVar()
         self.size_var = IntVar(value=50)
-        self.timeout_var = IntVar(value=12)
+        self.timeout_var = IntVar(value=8)
         self.max_probe_var = IntVar(value=80)
         self.do_roots = BooleanVar(value=True)
         self.do_exact = BooleanVar(value=True)
@@ -291,12 +312,11 @@ class App:
         self.do_suffix = BooleanVar(value=True)
         self.do_keywords = BooleanVar(value=True)
         self.filter_var = StringVar(value="全部")
-        self.status_var = StringVar(value="就绪。填公司全称即可，根域和标题会自动补。")
+        self.status_var = StringVar(value="就绪。公司全称一行一个，可批量。")
         self._icon_photo = None
         self._brand_icon = None
-        self.slogan_cv = None
-        self._slogan_id = None
-        self._slogan_x = 0
+        self._slogan_i = 0
+        self.slogan_var = StringVar(value=SLOGANS[0])
 
         self._style()
         self._set_icon()
@@ -306,19 +326,38 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_icon(self) -> None:
-        ico = ASSETS / "linshen.ico"
-        png = ASSETS / "linshen32.png"
-        if ico.is_file():
+        ascii_ico = _ascii_ico()
+        if ascii_ico:
             try:
-                self.root.iconbitmap(str(ico))
+                self.root.iconbitmap(default=ascii_ico)
             except Exception:
-                pass
+                try:
+                    self.root.iconbitmap(ascii_ico)
+                except Exception:
+                    pass
+        png = ASSETS / "linshen32.png"
         if png.is_file():
             try:
                 self._icon_photo = PhotoImage(file=str(png))
                 self.root.iconphoto(True, self._icon_photo)
             except Exception:
                 pass
+        if not ascii_ico:
+            return
+        try:
+            self.root.update_idletasks()
+            hwnd = ctypes.windll.user32.GetAncestor(self.root.winfo_id(), 2) or self.root.winfo_id()
+            user32 = ctypes.windll.user32
+            IMAGE_ICON, LR_LOADFROMFILE = 1, 0x0010
+            WM_SETICON, ICON_SMALL, ICON_BIG = 0x0080, 0, 1
+            h_small = user32.LoadImageW(None, ascii_ico, IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+            h_big = user32.LoadImageW(None, ascii_ico, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+            if h_small:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, h_small)
+            if h_big:
+                user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, h_big)
+        except Exception:
+            pass
 
     def _style(self) -> None:
         style = ttk.Style(self.root)
@@ -339,21 +378,32 @@ class App:
         brand = Frame(self.root, bg="#121212")
         brand.pack(fill="x")
         row = Frame(brand, bg="#121212")
-        row.pack(fill="x", padx=12, pady=(8, 0))
+        row.pack(fill="x", padx=12, pady=(10, 8))
+        side_w = 40
+        left = Frame(row, bg="#121212", width=side_w, height=36)
+        left.pack(side="left")
+        left.pack_propagate(False)
         png32 = ASSETS / "linshen32.png"
         if png32.is_file():
             try:
                 self._brand_icon = PhotoImage(file=str(png32))
-                Label(row, image=self._brand_icon, bg="#121212", bd=0).pack(side="left", padx=(0, 10))
+                Label(left, image=self._brand_icon, bg="#121212", bd=0).pack(anchor="w")
             except Exception:
                 pass
-        self.slogan_cv = Canvas(row, height=32, bg="#121212", highlightthickness=0, bd=0)
-        self.slogan_cv.pack(side="left", fill="x", expand=True)
+        mid = Frame(row, bg="#121212")
+        mid.pack(side="left", fill="both", expand=True)
         Label(
-            brand, text="by 林神", fg="#c9a227", bg="#121212",
-            font=("Microsoft YaHei UI", 9),
-        ).pack(anchor="w", padx=54, pady=(0, 8))
-        self._start_marquee()
+            mid, textvariable=self.slogan_var, fg="#e6c35c", bg="#121212",
+            font=("Microsoft YaHei UI", 12), anchor="center", justify="center",
+        ).pack(fill="x")
+        Label(
+            mid, text="by 林神", fg="#c9a227", bg="#121212",
+            font=("Microsoft YaHei UI", 9), anchor="center",
+        ).pack(fill="x")
+        right = Frame(row, bg="#121212", width=side_w, height=36)
+        right.pack(side="right")
+        right.pack_propagate(False)
+        self.root.after(10000, self._tick_slogan)
 
         head = ttk.Frame(self.root)
         head.pack(fill="x", padx=10, pady=(8, 0))
@@ -363,18 +413,17 @@ class App:
         top = ttk.LabelFrame(self.root, text="排查目标")
         top.pack(fill="x", padx=10, pady=(8, 4))
 
+        ttk.Label(top, text="公司名称（一行一个，可批量）").pack(anchor="w", padx=8, pady=(6, 0))
+        self.company_txt = ScrolledText(top, height=4, wrap="word")
+        self.company_txt.pack(fill="x", padx=8, pady=(0, 4))
+
         r0 = ttk.Frame(top)
         r0.pack(fill="x", **pad)
-        ttk.Label(r0, text="公司名称", width=10).pack(side="left")
-        ttk.Entry(r0, textvariable=self.title_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ttk.Label(r0, text="官网 URL", width=10).pack(side="left")
-        ttk.Entry(r0, textvariable=self.url_var).pack(side="left", fill="x", expand=True)
-
-        r1 = ttk.Frame(top)
-        r1.pack(fill="x", **pad)
-        ttk.Label(r1, text="官网根域", width=10).pack(side="left")
-        ttk.Entry(r1, textvariable=self.official_var).pack(side="left", fill="x", expand=True)
-        ttk.Label(r1, text="可空，反查根域会自动填").pack(side="left", padx=8)
+        ttk.Entry(r0, textvariable=self.url_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Label(r0, text="官网根域", width=10).pack(side="left")
+        ttk.Entry(r0, textvariable=self.official_var).pack(side="left", fill="x", expand=True)
+        ttk.Label(r0, text="单家可空自动填；批量时忽略这两项").pack(side="left", padx=8)
 
         mid = ttk.Frame(top)
         mid.pack(fill="x", **pad)
@@ -428,7 +477,9 @@ class App:
         tree_fr = ttk.Frame(body)
         body.add(tree_fr, weight=3)
         cols = [c[0] for c in COLS]
-        self.tree = ttk.Treeview(tree_fr, columns=cols, show="headings", selectmode="browse")
+        self.tree = ttk.Treeview(tree_fr, columns=cols, show="tree headings", selectmode="browse")
+        self.tree.heading("#0", text="公司 / 分类")
+        self.tree.column("#0", width=220, minwidth=140, stretch=False)
         for key, name, width in COLS:
             self.tree.heading(key, text=name, command=lambda k=key: self._sort(k))
             self.tree.column(key, width=width, minwidth=60, stretch=True)
@@ -442,6 +493,8 @@ class App:
         tree_fr.columnconfigure(0, weight=1)
         for tag, (bg, fg) in TAG_COLORS.items():
             self.tree.tag_configure(tag, background=bg, foreground=fg)
+        self.tree.tag_configure("company", background="#1f2a36", foreground="#f4e3b2")
+        self.tree.tag_configure("cat", font=("Microsoft YaHei UI", 9, "bold"))
         self.tree.bind("<Double-1>", self._open_url)
         self.tree.bind("<Button-3>", self._copy_menu)
 
@@ -499,36 +552,15 @@ class App:
         if aliases:
             self._text_set_edit(self.alias_txt, "\n".join(aliases))
 
-    def _start_marquee(self) -> None:
-        if self.slogan_cv is None:
-            return
-        blob = SLOGAN_GAP.join(SLOGANS) + SLOGAN_GAP
-        self._slogan_x = 40
-        self._slogan_id = self.slogan_cv.create_text(
-            self._slogan_x, 16,
-            text=blob,
-            anchor="w",
-            fill="#e6c35c",
-            font=("Microsoft YaHei UI", 12),
-        )
-        self.root.after(40, self._tick_marquee)
-
-    def _tick_marquee(self) -> None:
-        cv = self.slogan_cv
-        if cv is None:
-            return
+    def _tick_slogan(self) -> None:
         try:
-            if not cv.winfo_exists():
+            if not self.root.winfo_exists():
                 return
         except Exception:
             return
-        self._slogan_x -= 2
-        cv.coords(self._slogan_id, self._slogan_x, 16)
-        bbox = cv.bbox(self._slogan_id)
-        if bbox and bbox[2] < 8:
-            self._slogan_x = max(cv.winfo_width(), 200)
-            cv.coords(self._slogan_id, self._slogan_x, 16)
-        self.root.after(30, self._tick_marquee)
+        self._slogan_i = (self._slogan_i + 1) % len(SLOGANS)
+        self.slogan_var.set(SLOGANS[self._slogan_i])
+        self.root.after(10000, self._tick_slogan)
 
     def _text_set_edit(self, widget: ScrolledText, value: str) -> None:
         widget.delete("1.0", "end")
@@ -536,13 +568,13 @@ class App:
 
     def _cfg_dict(self) -> dict:
         return {
-            "title": self.title_var.get(),
-            "official": self.official_var.get(),
-            "url": self.url_var.get(),
-            "alias": self._text_get(self.alias_txt),
-            "keywords": self._text_get(self.kw_txt),
+            "title": "",
+            "official": "",
+            "url": "",
+            "alias": "",
+            "keywords": "",
             "size": int(self.size_var.get() or 50),
-            "timeout": int(self.timeout_var.get() or 12),
+            "timeout": int(self.timeout_var.get() or 8),
             "max_probe": int(self.max_probe_var.get() or 80),
             "do_roots": bool(self.do_roots.get()),
             "do_exact": bool(self.do_exact.get()),
@@ -553,13 +585,8 @@ class App:
         }
 
     def _apply_cfg(self, data: dict) -> None:
-        self.title_var.set(data.get("title") or "")
-        self.official_var.set(data.get("official") or "")
-        self.url_var.set(data.get("url") or "")
-        self._text_set_edit(self.alias_txt, data.get("alias") or "")
-        self._text_set_edit(self.kw_txt, data.get("keywords") or "")
         self.size_var.set(int(data.get("size") or 50))
-        self.timeout_var.set(int(data.get("timeout") or 12))
+        self.timeout_var.set(int(data.get("timeout") or 8))
         self.max_probe_var.set(int(data.get("max_probe") or 80))
         self.do_roots.set(bool(data.get("do_roots", True)))
         self.do_exact.set(bool(data.get("do_exact", True)))
@@ -583,31 +610,36 @@ class App:
         except OSError:
             pass
 
-    def _hunt_cfg(self) -> HuntConfig:
+    def _hunt_cfgs(self):
         d = self._cfg_dict()
-        return HuntConfig(
-            title=(d["title"] or "").strip(),
-            official_domains=split_list(d["official"]),
-            official_url=(d["url"] or "").strip(),
-            alias_domains=split_list(d["alias"]),
-            keywords=split_list(d["keywords"]),
-            do_roots=d.get("do_roots", True),
-            do_exact=d["do_exact"],
-            do_probe=d["do_probe"],
-            do_icp=d["do_icp"],
-            do_suffix=d["do_suffix"],
-            do_keywords=d["do_keywords"],
-            size=max(10, min(200, d["size"])),
-            probe_timeout=max(5, min(40, d["timeout"])),
-            max_probe=max(5, min(400, d["max_probe"])),
-        )
+        names = split_list(d["title"])
+        shared = len(names) == 1
+        cfgs = []
+        for name in names:
+            cfgs.append(HuntConfig(
+                title=name,
+                official_domains=split_list(d["official"]) if shared else [],
+                official_url=(d["url"] or "").strip() if shared else "",
+                alias_domains=split_list(d["alias"]) if shared else [],
+                keywords=split_list(d["keywords"]) if shared else [],
+                do_roots=d.get("do_roots", True),
+                do_exact=d["do_exact"],
+                do_probe=d["do_probe"],
+                do_icp=d["do_icp"],
+                do_suffix=d["do_suffix"],
+                do_keywords=d["do_keywords"],
+                size=max(10, min(200, d["size"])),
+                probe_timeout=max(5, min(40, d["timeout"])),
+                max_probe=max(5, min(400, d["max_probe"])),
+            ))
+        return cfgs
 
     def start(self) -> None:
         if self.running:
             return
-        cfg = self._hunt_cfg()
-        if not cfg.title:
-            messagebox.showwarning("缺参数", "先填公司名称。")
+        cfgs = self._hunt_cfgs()
+        if not cfgs:
+            messagebox.showwarning("缺参数", "先填公司名称（一行一个，可批量）。")
             return
         bad = [x.get("name") for x in tool_inventory() if not x.get("ok") and x.get("name") in ("httpx", "curl", "FOFA API", "FOFA Key")]
         if "FOFA Key" in bad:
@@ -616,7 +648,8 @@ class App:
         if "FOFA API" in bad:
             messagebox.showwarning("缺工具", "缺少 tools\\lib\\fofa_api.py。")
             return
-        if not cfg.do_roots and not cfg.do_exact and not cfg.do_keywords and not cfg.do_suffix:
+        sample = cfgs[0]
+        if not sample.do_roots and not sample.do_exact and not sample.do_keywords and not sample.do_suffix:
             messagebox.showwarning("缺步骤", "至少勾一项：反查根域 / 精确 title / 关键字扩搜 / 改后缀。")
             return
         self._save_cfg()
@@ -627,12 +660,15 @@ class App:
         self.running = True
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
-        self.status_var.set("排查中… 先反查根域、探官网，再 fuzz 标题。")
+        if len(cfgs) > 1:
+            self.status_var.set("批量排查 %s 家… 每家先反查根域，再 fuzz 标题。" % len(cfgs))
+        else:
+            self.status_var.set("排查中… 先反查根域、探官网，再 fuzz 标题。")
         self.engine = TitlePhishEngine(log=lambda m: self.q.put(("log", m)))
 
         def work() -> None:
             try:
-                result = self.engine.run(cfg)
+                result = self.engine.run_batch(cfgs) if len(cfgs) > 1 else self.engine.run(cfgs[0])
                 self.q.put(("done", result))
             except Exception:
                 self.q.put(("error", traceback.format_exc()))
@@ -657,7 +693,10 @@ class App:
             messagebox.showinfo("没有结果", "先跑完一次排查。")
             return
         OUT_DIR.mkdir(parents=True, exist_ok=True)
-        company = (self.result.get("company") or "hunt").replace("/", "_")
+        if self.result.get("batch"):
+            company = "批量_%s家" % len(self.result.get("jobs") or [])
+        else:
+            company = (self.result.get("company") or "hunt").replace("/", "_")
         default = OUT_DIR / ("%s_钓鱼排查_%s.xlsx" % (company, datetime.now().strftime("%Y%m%d_%H%M")))
         path = filedialog.asksaveasfilename(
             title="导出分析结果",
@@ -687,39 +726,60 @@ class App:
             return
         want = self.filter_var.get()
         hits = list(self.result.get("hits") or [])
-
-        def key(h) -> tuple:
-            v = h.verdict or ""
-            try:
-                return (VERDICT_ORDER.index(v), h.url)
-            except ValueError:
-                return (99, h.url)
-
-        hits.sort(key=key)
         n_show = 0
-        for h in hits:
-            if want != "全部" and h.verdict != want:
+        open_cats = {"可疑钓鱼", "可疑-被拦", "可疑-不通", "需人工"}
+        for block in group_hits(hits):
+            cats = []
+            n_company = 0
+            for verdict, hs in block["cats"]:
+                if want != "全部" and verdict != want:
+                    continue
+                cats.append((verdict, hs))
+                n_company += len(hs)
+            if not cats:
                 continue
-            vals = (
-                h.verdict, h.url, h.fofa_title, h.live_title, h.ip,
-                h.alive, h.icp, h.icp_org, h.note,
+            cid = self.tree.insert(
+                "", "end",
+                text="%s  (%s)" % (block["company"], n_company),
+                values=("", "", "", "", "", "", "", "", ""),
+                tags=("company",),
+                open=True,
             )
-            self.tree.insert("", "end", values=vals, tags=(h.verdict or "",))
-            n_show += 1
+            for verdict, hs in cats:
+                vid = self.tree.insert(
+                    cid, "end",
+                    text="%s  (%s)" % (verdict, len(hs)),
+                    values=(verdict, "", "", "", "", "", "", "", ""),
+                    tags=("cat", verdict),
+                    open=verdict in open_cats,
+                )
+                for h in hs:
+                    vals = (
+                        h.verdict, h.url, h.fofa_title, h.live_title, h.ip,
+                        h.alive, h.icp, h.icp_org, h.note,
+                    )
+                    self.tree.insert(vid, "end", text="", values=vals, tags=(h.verdict or "",))
+                    n_show += 1
         total = len(hits)
-        self.status_var.set("显示 %s / %s 条。双击打开 URL，右键复制。" % (n_show, total))
+        self.status_var.set("显示 %s / %s 条。公司下按可疑分类。双击打开 URL。" % (n_show, total))
 
     def _sort(self, col: str) -> None:
-        rows = [(self.tree.set(k, col), k) for k in self.tree.get_children("")]
-        rows.sort(key=lambda x: x[0])
-        for i, (_, k) in enumerate(rows):
-            self.tree.move(k, "", i)
+        for company in self.tree.get_children(""):
+            for cat in self.tree.get_children(company):
+                rows = [(self.tree.set(k, col), k) for k in self.tree.get_children(cat)]
+                rows.sort(key=lambda x: x[0])
+                for i, (_, k) in enumerate(rows):
+                    self.tree.move(k, cat, i)
 
     def _selected_url(self) -> str:
         sel = self.tree.selection()
         if not sel:
             return ""
-        return self.tree.set(sel[0], "url")
+        iid = sel[0]
+        tags = set(self.tree.item(iid, "tags") or ())
+        if "company" in tags or "cat" in tags:
+            return ""
+        return self.tree.set(iid, "url")
 
     def _open_url(self, _evt=None) -> None:
         url = self._selected_url()
@@ -755,12 +815,17 @@ class App:
                     self.status_var.set(str(payload))
                 elif kind == "done":
                     self.result = payload
-                    self._apply_discovered(payload)
+                    if not payload.get("batch"):
+                        self._apply_discovered(payload)
                     self._set_text(self.ana_txt, payload.get("summary") or "")
                     self._fill_tree()
                     self._finish()
                     n = len(payload.get("hits") or [])
-                    self.status_var.set("完成，%s 条。根域和 fuzz 标题已回填。" % n)
+                    jobs = payload.get("jobs") or []
+                    if payload.get("batch"):
+                        self.status_var.set("完成，%s 家 / %s 条。按公司分组看可疑。" % (len(jobs), n))
+                    else:
+                        self.status_var.set("完成，%s 条。根域和 fuzz 标题已回填。" % n)
                     self._save_cfg()
                 elif kind == "error":
                     self._append_log(str(payload))
@@ -784,6 +849,7 @@ class App:
 def main() -> None:
     os.environ.setdefault("FOFA_API_MODE", "official")
     try:
+        _set_app_id()
         _dpi()
         root = Tk()
         App(root)

@@ -27,9 +27,9 @@ if not exist "%HERE%config.json" (
   exit /b 1
 )
 
-"%PY%" "%HERE%ui.py"
-if errorlevel 1 (
-  echo.
-  echo Start failed. See crash.log in this folder.
-  pause
+set "PYW=%PY%"
+if /i "%PY:~-10%"=="python.exe" (
+  set "PYW=%PY:~0,-10%pythonw.exe"
+  if not exist "%PYW%" set "PYW=%PY%"
 )
+start "TwinTitle" /D "%HERE%" "%PYW%" "%HERE%ui.py"

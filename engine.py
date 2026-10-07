@@ -10,8 +10,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Set
@@ -70,13 +72,13 @@ def load_runtime() -> dict:
             cfg = {}
     key = (os.environ.get("FOFA_API_KEY") or cfg.get("fofa_key") or "").strip()
     try:
-        interval = float(cfg.get("fofa_interval") or 4)
+        interval = float(cfg.get("fofa_interval") or 2)
     except (TypeError, ValueError):
-        interval = 4.0
+        interval = 2.0
     return {
         "fofa_key": key,
         "fofa_mode": (cfg.get("fofa_mode") or os.environ.get("FOFA_API_MODE") or "official").strip() or "official",
-        "fofa_interval": interval if interval >= 1 else 4.0,
+        "fofa_interval": interval if interval >= 1 else 2.0,
         "httpx": _first_file(TOOLS_DIR / "httpx.exe", Path(r"F:\cheshi\03_Fingerprinting\httpx.exe")),
         "curl": _first_file(TOOLS_DIR / "curl.exe", Path(r"C:\Windows\System32\curl.exe")),
         "proxy": (cfg.get("proxy") or "http://127.0.0.1:7897").strip(),
@@ -276,7 +278,7 @@ class HuntConfig:
     do_suffix: bool = True
     do_keywords: bool = True
     size: int = 50
-    probe_timeout: int = 12
+    probe_timeout: int = 8
     max_probe: int = 80
 
 
@@ -297,6 +299,7 @@ class Hit:
     verdict: str = ""
     note: str = ""
     own: bool = False
+    company: str = ""
 
 
 def _norm_host(raw: str) -> str:
@@ -530,7 +533,7 @@ def parse_icplishi_company(html: str, company: str) -> List[dict]:
     return rows
 
 
-def fetch_icplishi_company(company: str, timeout: float = 45.0, log: Optional[Callable] = None) -> List[dict]:
+def fetch_icplishi_company(company: str, timeout: float = 18.0, log: Optional[Callable] = None) -> List[dict]:
     name = (company or "").strip()
     if not name:
         return []
@@ -712,9 +715,9 @@ class TitlePhishEngine:
         self.fofa_key = rt["fofa_key"]
         if interval is None:
             try:
-                interval = float(rt.get("fofa_interval") or 4)
+                interval = float(rt.get("fofa_interval") or 2)
             except (TypeError, ValueError):
-                interval = 4.0
+                interval = 2.0
         if not self.fofa_key:
             raise ValueError("未配置 FOFA Key。点右上角「配置」填写。")
         os.environ["FOFA_API_KEY"] = self.fofa_key
@@ -728,6 +731,7 @@ class TitlePhishEngine:
             proxy=proxy or None,
         )
         self._icp_cache: Dict[str, tuple] = {}
+        self._icp_lock = threading.Lock()
         self._ip_cache: Dict[str, str] = {}
         self._stop = False
         self._proc: Optional[subprocess.Popen] = None
@@ -754,13 +758,13 @@ class TitlePhishEngine:
             except Exception as exc:
                 last_err = str(exc)
                 self._say("[FOFA] 异常 %s" % exc)
-                time.sleep(6)
+                time.sleep(2)
                 continue
             if data.get("error"):
                 last_err = data.get("errmsg") or data.get("message") or str(data)
                 self._say("[FOFA] 错误 %s" % last_err)
                 if "频繁" in str(last_err) or "45012" in str(last_err):
-                    time.sleep(8)
+                    time.sleep(4)
                     continue
                 break
             total = data.get("total")
@@ -794,11 +798,12 @@ class TitlePhishEngine:
         root = root_domain(domain)
         if not root or _is_ip(root) or not is_valid_root(root):
             return "", ""
-        if root in self._icp_cache:
-            return self._icp_cache[root]
+        with self._icp_lock:
+            if root in self._icp_cache:
+                return self._icp_cache[root]
         try:
             name = domain_icp.clean_domain(root)
-            code, html = domain_icp.fetch(name, 20)
+            code, html = domain_icp.fetch(name, 12)
             if code >= 400:
                 rec = ("查询失败 HTTP %s" % code, "")
             else:
@@ -806,7 +811,8 @@ class TitlePhishEngine:
                 rec = (license_no or "未收录", company or "")
         except Exception as exc:
             rec = ("查询失败", str(exc))
-        self._icp_cache[root] = rec
+        with self._icp_lock:
+            self._icp_cache[root] = rec
         return rec
 
     def probe(self, url: str, host: str, ip: str, port: str, timeout: int) -> dict:
@@ -969,13 +975,27 @@ class TitlePhishEngine:
         if not urls:
             return out
 
-        def curl_all() -> Dict[str, dict]:
+        def curl_one(url: str, job: dict) -> tuple:
+            self._say("[探活] curl %s" % url)
+            return url, self.probe(url, job.get("host") or "", job.get("ip") or "", job.get("port") or "", timeout)
+
+        def curl_all(items=None) -> Dict[str, dict]:
+            bag = items if items is not None else list(by_url.items())
             got: Dict[str, dict] = {}
-            for url, job in by_url.items():
-                if self._stop:
-                    break
-                self._say("[探活] curl %s" % url)
-                got[url] = self.probe(url, job.get("host") or "", job.get("ip") or "", job.get("port") or "", timeout)
+            if not bag:
+                return got
+            workers = min(12, max(1, len(bag)))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futs = [pool.submit(curl_one, url, job) for url, job in bag]
+                for fut in as_completed(futs):
+                    if self._stop:
+                        break
+                    try:
+                        url, rec = fut.result()
+                    except Exception as exc:
+                        self._say("[探活] curl 异常 %s" % exc)
+                        continue
+                    got[url] = rec
             return got
 
         if not Path(self.httpx).is_file():
@@ -1007,7 +1027,7 @@ class TitlePhishEngine:
                 cwd=workdir,
             )
             try:
-                stdout, stderr = self._proc.communicate(timeout=max(60, int(timeout) * 4 + 20))
+                stdout, stderr = self._proc.communicate(timeout=max(25, int(timeout) * 2 + 8))
             except subprocess.TimeoutExpired:
                 self._proc.kill()
                 stdout, stderr = self._proc.communicate()
@@ -1036,6 +1056,7 @@ class TitlePhishEngine:
             self._proc = None
             shutil.rmtree(workdir, ignore_errors=True)
 
+        fallback: List[tuple] = []
         for url, job in by_url.items():
             if self._stop:
                 break
@@ -1043,21 +1064,22 @@ class TitlePhishEngine:
             if pr and not self._need_curl_fallback(pr, job):
                 out[url] = pr
                 continue
-            host = job.get("host") or ""
             ip = _usable_ip(job.get("ip") or "") or _usable_ip((pr or {}).get("resolved_ip") or "")
-            if not ip:
-                ip = self._fofa_ip(host)
+            job2 = dict(job)
             if ip:
-                self._say("[探活] httpx 未中/Clash，curl --resolve %s -> %s" % (url, ip))
-            else:
-                self._say("[探活] httpx 未中，curl --noproxy %s" % url)
-            got = self.probe(url, host, ip, job.get("port") or "", timeout)
-            if ip and _is_fake_ip(got.get("resolved_ip") or ""):
-                got["alive"] = "Clash污染"
-                got["note"] = ((got.get("note") or "") + " | Clash fake-ip").strip(" |")
-            elif (got.get("alive") or "").startswith("通") and _is_fake_ip(ip):
-                got["alive"] = "Clash污染"
-            out[url] = got
+                job2["ip"] = ip
+            fallback.append((url, job2))
+        if fallback:
+            self._say("[探活] curl 补探 %s 条" % len(fallback))
+            extra = curl_all(fallback)
+            for url, got in extra.items():
+                ip = _usable_ip((by_url.get(url) or {}).get("ip") or "")
+                if ip and _is_fake_ip(got.get("resolved_ip") or ""):
+                    got["alive"] = "Clash污染"
+                    got["note"] = ((got.get("note") or "") + " | Clash fake-ip").strip(" |")
+                elif (got.get("alive") or "").startswith("通") and _is_fake_ip(ip):
+                    got["alive"] = "Clash污染"
+                out[url] = got
         return out
 
     def discover_roots(self, company: str) -> dict:
@@ -1252,7 +1274,7 @@ class TitlePhishEngine:
                     "ip": "",
                     "port": str(p.port or (443 if p.scheme == "https" else 80)),
                 })
-            probed = self.probe_batch(jobs, cfg.probe_timeout, threads=min(20, max(6, len(jobs))))
+            probed = self.probe_batch(jobs, cfg.probe_timeout, threads=min(50, max(16, len(jobs))))
             best = None
             scored = []
             for url in cand:
@@ -1378,21 +1400,34 @@ class TitlePhishEngine:
             if dropped:
                 self._say("[FOFA] 丢掉无关/垃圾 %s 条，留 %s  %s" % (dropped, kept, query))
 
+        queried_titles: Set[str] = set()
         if cfg.do_exact:
             add_from_fofa('title="%s"' % fofa_escape_title(company), cfg.size, needle=company)
+            queried_titles.add(company)
             extra_titles = []
             for t in site_names:
                 t = (t or "").strip()
                 if t and t != company and t not in extra_titles and not GENERIC_LIVE_RE.search(t):
                     extra_titles.append(t)
-            for t in extra_titles[:3]:
+            for t in extra_titles[:1]:
+                if t in queried_titles:
+                    continue
                 add_from_fofa('title="%s"' % fofa_escape_title(t), min(cfg.size, 40), needle=t)
+                queried_titles.add(t)
 
         if cfg.do_keywords:
+            n_kw = 0
             for kw in keywords:
                 if self._stop:
                     break
-                add_from_fofa('title="%s"' % fofa_escape_title(kw), min(cfg.size, 50), needle=kw)
+                if kw in queried_titles:
+                    continue
+                if n_kw >= 6:
+                    self._say("[关键字] 已跑 6 条，后面只作判定针，不再打 FOFA")
+                    break
+                add_from_fofa('title="%s"' % fofa_escape_title(kw), min(cfg.size, 40), needle=kw)
+                queried_titles.add(kw)
+                n_kw += 1
 
         if cfg.do_suffix:
             names = list(official)
@@ -1407,10 +1442,8 @@ class TitlePhishEngine:
             names.extend(extra)
             variants = suffix_variants(names)
             alias_found = [v for v in extra + variants if v and v not in official_set]
-            for name in alias_found:
-                if self._stop:
-                    break
-                add_from_fofa('host="%s"' % name, 20, title_gate=False)
+            if alias_found:
+                self._say("[改后缀] %s 个，只探活不打 FOFA" % len(alias_found))
             if cfg.do_probe:
                 have = {root_domain(h.domain or h.host) for h in hits}
                 for name in alias_found:
@@ -1460,7 +1493,7 @@ class TitlePhishEngine:
                     "ip": hit.ip,
                     "port": hit.port,
                 })
-            probed = self.probe_batch(jobs, cfg.probe_timeout, threads=min(30, max(8, len(jobs)))) if jobs else {}
+            probed = self.probe_batch(jobs, cfg.probe_timeout, threads=min(50, max(16, len(jobs)))) if jobs else {}
             if official_url:
                 pr = self._lookup_probe(probed, official_url) or {}
                 if pr:
@@ -1501,31 +1534,31 @@ class TitlePhishEngine:
             if like or suffix_live or (hit.alive.startswith("通") and not _is_junk_title(blob)):
                 icp_targets.append(hit)
 
-        seen_icp: Set[str] = set()
         if cfg.do_icp:
+            roots: List[str] = []
+            if official:
+                roots.append(official[0])
+            for hit in icp_targets:
+                root = root_domain(hit.domain or hit.host)
+                if root and root not in roots:
+                    roots.append(root)
+            if roots:
+                self._say("[备案] 并发 %s 个根域" % len(roots))
+                workers = min(8, max(1, len(roots)))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    list(pool.map(self.icp, roots))
             if official:
                 lic, org = self.icp(official[0])
                 official_org = org
                 self._say("[备案] 官网根域 %s  %s  %s" % (official[0], lic, org))
-            for hit in icp_targets:
-                if self._stop:
-                    break
-                root = root_domain(hit.domain or hit.host)
-                if not root or root in seen_icp:
-                    if root in self._icp_cache:
-                        hit.icp, hit.icp_org = self._icp_cache[root]
-                    continue
-                seen_icp.add(root)
-                self._say("[备案] %s" % root)
-                lic, org = self.icp(root)
-                hit.icp, hit.icp_org = lic, org
-            # fill cache onto siblings
             for hit in hits:
                 root = root_domain(hit.domain or hit.host)
                 if root in self._icp_cache and not hit.own:
                     hit.icp, hit.icp_org = self._icp_cache[root]
 
         for hit in hits:
+            if not hit.company:
+                hit.company = company
             self._verdict(hit, company, official_org, keywords)
 
         summary = self.summarize(company, official, hits, queries_run, keywords, official_url)
@@ -1542,6 +1575,39 @@ class TitlePhishEngine:
             "queries": queries_run,
             "hits": hits,
             "summary": summary,
+        }
+
+    def run_batch(self, cfgs: List[HuntConfig]) -> dict:
+        jobs: List[dict] = []
+        all_hits: List[Hit] = []
+        all_q: List[dict] = []
+        summaries: List[str] = []
+        total = len(cfgs)
+        for i, cfg in enumerate(cfgs, 1):
+            if self._stop:
+                self._say("[批量] 已停止，完成 %s/%s" % (len(jobs), total))
+                break
+            self._say("==== 批量 %s/%s  %s ====" % (i, total, cfg.title))
+            one = self.run(cfg)
+            jobs.append(one)
+            all_hits.extend(one.get("hits") or [])
+            all_q.extend(one.get("queries") or [])
+            if one.get("summary"):
+                summaries.append(one["summary"])
+        label = jobs[0]["company"] if len(jobs) == 1 else "批量 %s 家" % len(jobs)
+        return {
+            "batch": len(jobs) > 1,
+            "company": label,
+            "jobs": jobs,
+            "hits": all_hits,
+            "queries": all_q,
+            "summary": "\n\n".join(summaries),
+            "official_domains": (jobs[0].get("official_domains") or []) if len(jobs) == 1 else [],
+            "official_url": (jobs[0].get("official_url") or "") if len(jobs) == 1 else "",
+            "official_org": (jobs[0].get("official_org") or "") if len(jobs) == 1 else "",
+            "keywords": (jobs[0].get("keywords") or []) if len(jobs) == 1 else [],
+            "alias_domains": (jobs[0].get("alias_domains") or []) if len(jobs) == 1 else [],
+            "site_names": (jobs[0].get("site_names") or []) if len(jobs) == 1 else [],
         }
 
     def summarize(self, company: str, official: List[str], hits: List[Hit], queries: List[dict], keywords: Optional[List[str]] = None, official_url: str = "") -> str:
@@ -1590,14 +1656,50 @@ class TitlePhishEngine:
         return "\n".join(lines)
 
 
-def hits_to_rows(hits: List[Hit]) -> List[List[str]]:
-    header = ["判定", "URL", "FOFA标题", "活体标题", "IP", "端口", "存活", "备案号", "备案主体", "查询语句", "说明"]
-    rows = [header]
+VERDICT_ORDER = [
+    "可疑钓鱼", "可疑-被拦", "可疑-不通", "需人工",
+    "测绘过期", "博彩/冒备案", "自有", "排除", "未见注册",
+]
+
+
+def group_hits(hits: List[Hit]) -> List[dict]:
+    """按公司 → 判定分类。UI / xlsx 共用。"""
+    order: List[str] = []
+    bag: Dict[str, List[Hit]] = {}
     for h in hits:
-        rows.append([
-            h.verdict, h.url, h.fofa_title, h.live_title, h.ip, h.port,
-            h.alive, h.icp, h.icp_org, h.query, h.note,
-        ])
+        c = (h.company or "").strip() or "未填公司"
+        if c not in bag:
+            bag[c] = []
+            order.append(c)
+        bag[c].append(h)
+    out: List[dict] = []
+    for c in order:
+        by_v: Dict[str, List[Hit]] = {}
+        for h in bag[c]:
+            by_v.setdefault(h.verdict or "排除", []).append(h)
+        cats = []
+        seen_v: Set[str] = set()
+        for v in VERDICT_ORDER:
+            if v in by_v:
+                cats.append((v, by_v[v]))
+                seen_v.add(v)
+        for v, hs in by_v.items():
+            if v not in seen_v:
+                cats.append((v, hs))
+        out.append({"company": c, "cats": cats})
+    return out
+
+
+def hits_to_rows(hits: List[Hit]) -> List[List[str]]:
+    header = ["公司", "判定", "URL", "FOFA标题", "活体标题", "IP", "端口", "存活", "备案号", "备案主体", "查询语句", "说明"]
+    rows = [header]
+    for block in group_hits(hits):
+        for verdict, hs in block["cats"]:
+            for h in hs:
+                rows.append([
+                    block["company"], h.verdict, h.url, h.fofa_title, h.live_title, h.ip, h.port,
+                    h.alive, h.icp, h.icp_org, h.query, h.note,
+                ])
     return rows
 
 
@@ -1639,10 +1741,10 @@ def export_xlsx(path: str, result: dict) -> None:
             if i == 1:
                 cell.fill = PatternFill("solid", fgColor="2F5496")
             elif i > 1:
-                color = fills.get(str(row[0]), "FFFFFF")
+                color = fills.get(str(row[1]), "FFFFFF")
                 cell.fill = PatternFill("solid", fgColor=color)
         ws.row_dimensions[i].height = 22 if i == 1 else 40
-    widths = [14, 42, 36, 36, 18, 8, 18, 22, 22, 28, 36]
+    widths = [22, 14, 42, 36, 36, 18, 8, 18, 22, 22, 28, 36]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
@@ -1688,23 +1790,26 @@ def main() -> None:
         info = eng.api.validate()
         print(info)
         return
-    if not (args.title or "").strip():
-        p.error("需要 --title")
-    cfg = HuntConfig(
-        title=args.title.strip(),
-        official_domains=split_list(args.official),
-        official_url=(args.url or "").strip(),
-        alias_domains=split_list(args.alias),
-        keywords=split_list(args.keywords),
-        do_roots=not args.no_roots,
-        do_exact=True,
-        do_probe=not args.no_probe,
-        do_icp=not args.no_icp,
-        do_suffix=not args.no_suffix,
-        do_keywords=not args.no_keywords,
-        size=args.size,
-    )
-    result = eng.run(cfg)
+    titles = split_list(args.title)
+    if not titles:
+        p.error("需要 --title（一行一个或逗号分隔，可批量）")
+    cfgs = []
+    for i, name in enumerate(titles):
+        cfgs.append(HuntConfig(
+            title=name,
+            official_domains=split_list(args.official) if len(titles) == 1 else [],
+            official_url=(args.url or "").strip() if len(titles) == 1 else "",
+            alias_domains=split_list(args.alias) if len(titles) == 1 else [],
+            keywords=split_list(args.keywords) if len(titles) == 1 else [],
+            do_roots=not args.no_roots,
+            do_exact=True,
+            do_probe=not args.no_probe,
+            do_icp=not args.no_icp,
+            do_suffix=not args.no_suffix,
+            do_keywords=not args.no_keywords,
+            size=args.size,
+        ))
+    result = eng.run_batch(cfgs) if len(cfgs) > 1 else eng.run(cfgs[0])
     if args.out:
         export_xlsx(args.out, result)
         print("xlsx " + args.out)

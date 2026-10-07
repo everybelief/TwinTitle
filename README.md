@@ -29,7 +29,7 @@
 
 ## What it is
 
-Give TwinTitle a **company legal name**. It:
+Give TwinTitle one or more **company legal names** (one per line). It:
 
 1. Resolves official root domains from public ICP records
 2. Probes the real homepage and fuzzes lookalike titles
@@ -60,7 +60,9 @@ Root domains must be real ICP domains. Emails, `@`, `0.0.0.0`, public mailbox ho
 - GUI (tkinter) + headless CLI
 - One field is enough: company legal name
 - Public ICP reverse lookup, no local ICP service to deploy
-- FOFA official API (VIP interval ~4s)
+- FOFA official API (default interval 2s)
+- Batch companies: results grouped by company → verdict
+- Slogan rotates every 10s, no scroll
 - Live probe ignores Clash TUN fake-ip `198.18.0.0/15`
 - Drops news-center / mailbox templates whose title does not contain the company or keyword
 - Keeps a single live official row as **自有**
@@ -91,7 +93,7 @@ copy config.example.json config.json
 2. Put your FOFA key in `config.json` (or open the app → **配置**).
 3. Or skip Python: grab `TwinTitle.exe` from [Releases](https://github.com/everybelief/TwinTitle/releases/latest), put FOFA key in **配置**.
 4. Double-click `启动.bat` (or `run.cmd`) if you run from source.
-5. Fill **公司名称** (legal name). Root domains / URL / keywords can stay empty.
+5. Fill **公司名称** (legal name, one per line for batch). Single-company: roots / URL / keywords can stay empty. Batch mode ignores those two fields.
 6. Click **开始排查**. Export xlsx when done.
 
 Settings dialog also probes FOFA / proxy / ICP reverse so you know they work before a hunt.
@@ -104,7 +106,7 @@ Settings dialog also probes FOFA / proxy / ICP reverse so you know they work bef
 {
   "fofa_key": "在这里填你的 FOFA API KEY",
   "fofa_mode": "official",
-  "fofa_interval": 4,
+  "fofa_interval": 2,
   "proxy": "http://127.0.0.1:7897",
   "proxy_enable": false
 }
@@ -114,7 +116,7 @@ Settings dialog also probes FOFA / proxy / ICP reverse so you know they work bef
 | --- | --- |
 | `fofa_key` | FOFA API key. Never commit `config.json`. |
 | `fofa_mode` | `official` |
-| `fofa_interval` | Seconds between FOFA calls (VIP ~4) |
+| `fofa_interval` | Seconds between FOFA calls (default 2) |
 | `proxy` | Optional HTTP proxy |
 | `proxy_enable` | Default `false`. FOFA / ICP reverse stay direct unless enabled. Live probe is always `--noproxy`. |
 
@@ -123,11 +125,12 @@ Settings dialog also probes FOFA / proxy / ICP reverse so you know they work bef
 ```text
 python engine.py --validate
 python engine.py --title "某某集团有限公司" --out out/result.xlsx
+python engine.py --title "甲公司有限公司,乙公司有限公司" --no-suffix --out out/batch.xlsx
 ```
 
 | Flag | Meaning |
 | --- | --- |
-| `--title` | Company legal name (required) |
+| `--title` | Company legal name (required; comma / newline for batch) |
 | `--official` | Official roots, comma / newline |
 | `--url` | Official URL |
 | `--alias` | Alias roots |
@@ -147,7 +150,7 @@ xlsx, three sheets:
 
 | Sheet | Content |
 | --- | --- |
-| 结果 | Verdict, URL, FOFA title, live title, IP, port, alive, ICP, org, query, note |
+| 结果 | Company, verdict, URL, FOFA title, live title, IP, port, alive, ICP, org, query, note |
 | 分析 | Hunt summary |
 | 查询语句 | Each FOFA query + total / returned / error |
 
@@ -205,6 +208,12 @@ TwinTitle/
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md).
+
+### v1.1.0 — 2026-10-07
+
+- Slogan swaps every 10s, no scroll
+- Faster hunt: FOFA interval 2s, concurrent probe/ICP, suffix probe without FOFA
+- Batch company names; results grouped by company → verdict
 
 ### v1.0.0 — 2026-10-06
 
