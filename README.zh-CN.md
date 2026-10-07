@@ -23,82 +23,37 @@
 
 ---
 
-## 这是什么
-
-填**公司全称**（一行一个，可批量），TwinTitle 会：
-
-1. 用公开备案反查官网根域
-2. 探官网标题，fuzz 像真站关键字
-3. 用 FOFA 搜精确 title 和关键字
-4. 对命中站探活、查备案、改后缀看是否注册
-5. 导出带判定的 xlsx：结果 / 分析 / 查询语句
-
-英文名 **TwinTitle**，界面中文名 **同题猎手**。
-
-## 管线
+填公司全称，一行一个，可批量。工具会反查备案根域、探官网标题、用 FOFA 搜同标题 / 像真站，探活、查备案、改后缀看有没有被人注册，最后导出 xlsx。
 
 ```
 公司全称
-  → icplishi.com/company/{name}/     公开备案反查根域
-  → www / apex 探官网标题
-  → 标题 fuzz 像真站关键字
-  → FOFA title="…" 精确 + 关键字扩搜
-  → httpx 探活；Clash 假 IP 再 curl --noproxy --resolve
-  → 像真站走 chinaz 备案
-  → 根名改 .com / .net / .org / .top / .cn / .com.cn 看是否注册
+  → icplishi 公开备案反查根域
+  → 探官网标题，fuzz 像真站关键字
+  → FOFA 精确 title + 关键字
+  → 探活；Clash 假 IP 改走 curl
+  → 像真站查 chinaz 备案
+  → 根名改后缀看是否注册
   → 判定 + xlsx
 ```
 
-根域必须是备案域名。邮箱、`@`、`0.0.0.0`、公共邮箱商一律丢掉。
+根域必须是备案域名。邮箱、`@`、`0.0.0.0` 一律丢掉。Hunter / Quake / WHOIS / 爱企查不做。
 
-## 功能
+## 使用
 
-- GUI（tkinter）+ 无头 CLI
-- 只填公司全称就能跑，根域 / URL / 关键字可空
-- 公开备案反查，不用在本机部署 ICP 服务
-- FOFA 官方 API（默认间隔 2 秒）
-- 批量公司：结果按公司 → 可疑分类分组
-- 顶栏标语 10 秒换一条，不滚动
-- 探活忽略 Clash TUN 假 IP `198.18.0.0/15`
-- 丢掉标题不含公司名 / 关键字的资讯中心、邮箱模板
-- 官网只留一条活体，判定为 **自有**
-- 随包 `httpx.exe` / `curl.exe` / FOFA / chinaz
+不想装 Python：从 [Releases](https://github.com/everybelief/TwinTitle/releases/latest) 下 `TwinTitle.exe`，打开后点 **配置** 填 FOFA Key。
 
-本工具不做：Hunter、Quake、WHOIS、ENScan、爱企查。
-
-## 环境
-
-- Windows
-- Python 3.8+（带 tkinter）
-- FOFA API Key（`official` 模式）
-
-```text
-pip install -r requirements.txt
-```
-
-当前依赖：`openpyxl>=3.1.0`。
-
-## 快速开始
-
-1. 复制配置：
+源码：
 
 ```text
 copy config.example.json config.json
+pip install -r requirements.txt
 ```
 
-2. 在 `config.json` 填 FOFA Key（或打开软件点右上角 **配置**）。
-3. 不想装 Python：从 [Releases](https://github.com/everybelief/TwinTitle/releases/latest) 下 `TwinTitle.exe`，打开后点 **配置** 填 Key。
-4. 源码运行就双击 `启动.bat`（或 `run.cmd`）。
-5. 填 **公司名称**（全称，一行一个可批量）。单家可空根域 / URL / 关键字；批量时忽略这两项，每家自己反查。
-6. 点 **开始排查**，结束后导出 xlsx。
+双击 `启动.bat`，填公司名称，点开始排查。单家根域 / URL / 关键字可空；批量时每家自己反查。结果按公司、按判定分类，可导出 xlsx。
 
-配置窗口可以一键探测 FOFA / 代理 / 备案反查是否有效。
-
-**不要把 `config.json` 提交进 git。** 仓库里只留 `config.example.json`。
+`config.json` 只放本地，不要提交。
 
 ## 配置
-
-`config.example.json`：
 
 ```json
 {
@@ -112,90 +67,70 @@ copy config.example.json config.json
 
 | 字段 | 含义 |
 | --- | --- |
-| `fofa_key` | FOFA Key。只写本地 `config.json`，禁止进仓库 |
+| `fofa_key` | FOFA Key |
 | `fofa_mode` | `official` |
-| `fofa_interval` | FOFA 调用间隔秒（默认 2） |
-| `proxy` | 可选 HTTP 代理 |
-| `proxy_enable` | 默认 `false`。测绘 / 备案反查默认直连；探活始终 `--noproxy` |
+| `fofa_interval` | 调用间隔（秒） |
+| `proxy` | 可选代理 |
+| `proxy_enable` | 默认关。测绘 / 备案直连；探活始终不走代理 |
 
 ## 命令行
 
 ```text
 python engine.py --validate
 python engine.py --title "某某集团有限公司" --out out/result.xlsx
-python engine.py --title "甲公司有限公司,乙公司有限公司" --no-suffix --out out/batch.xlsx
+python engine.py --title "甲公司有限公司,乙公司有限公司" --out out/batch.xlsx
 ```
 
 | 参数 | 含义 |
 | --- | --- |
-| `--title` | 公司全称（必填，逗号/换行可批量） |
-| `--official` | 官网根域，逗号或换行 |
+| `--title` | 公司全称，逗号或换行可多家 |
+| `--official` | 官网根域 |
 | `--url` | 官网 URL |
 | `--alias` | 别名根域 |
 | `--keywords` | 扩搜关键字 |
 | `--out` | xlsx 路径 |
-| `--size` | FOFA 条数（默认 50） |
-| `--no-roots` | 跳过备案反查 |
-| `--no-probe` | 跳过探活 |
-| `--no-icp` | 跳过 chinaz 备案 |
-| `--no-suffix` | 跳过改后缀 |
-| `--no-keywords` | 跳过关键字 FOFA |
-| `--validate` | 只测 FOFA 连通 |
+| `--size` | FOFA 条数，默认 50 |
+| `--no-roots` | 不反查备案 |
+| `--no-probe` | 不探活 |
+| `--no-icp` | 不查 chinaz |
+| `--no-suffix` | 不改后缀 |
+| `--no-keywords` | 不跑关键字 FOFA |
+| `--validate` | 只测 FOFA 通不通 |
 
 ## 产出
 
-xlsx 三张表：
+xlsx 三张表：结果、分析、查询语句。默认写到 `out\`。
 
-| 表 | 内容 |
-| --- | --- |
-| 结果 | 公司、判定、URL、FOFA标题、活体标题、IP、端口、存活、备案号、备案主体、查询语句、说明 |
-| 分析 | 排查摘要 |
-| 查询语句 | 每条 FOFA 语句 + total / 返回 / 错误 |
-
-默认目录：`out\`。
-
-### 判定
-
-| 标签 | 含义 |
+| 判定 | 含义 |
 | --- | --- |
 | 可疑钓鱼 | 第三方活体，同标题 / 像真站 |
-| 可疑-被拦 | 像真站，被 WAF / 403 / 挑战页拦住 |
-| 可疑-不通 | FOFA 有记录，现在不通 |
-| 需人工 | 说不清，要人看 |
-| 测绘过期 | 还在 FOFA 索引里，已经不活 |
+| 可疑-被拦 | 像真站，被拦了 |
+| 可疑-不通 | 测绘有，现在打不开 |
+| 需人工 | 说不清 |
+| 测绘过期 | 索引还在，站已经死 |
 | 博彩/冒备案 | 博彩或假备案 |
-| 自有 | 官网活体 |
+| 自有 | 官网 |
 | 排除 | 无关 |
-| 未见注册 | 别名后缀没注册 |
+| 未见注册 | 这个后缀没人注册 |
 
-FOFA 某条语句返回 0，只说明当前索引空，不说明世界上没有这个站。
+FOFA 返回 0 条只说明当前索引空。
 
 ## 目录
 
 ```text
-TwinTitle/
-  启动.bat / run.cmd     图形界面入口
-  ui.py                  界面
-  engine.py              引擎 + 无头 CLI
-  config.example.json    配置模板
-  requirements.txt
-  assets/linshen.ico     林神品牌图标
-  assets/screenshot.png  运行截图
-  TwinTitle.spec         PyInstaller onefile
-  tools/
-    httpx.exe            批量探活（projectdiscovery 1.2.4）
-    curl.exe             钉测绘 IP 探活（TUN 污染 DNS 时）
-    lib/fofa_api.py
-    lib/domain_icp.py    chinaz 备案（域名 → 备案号）
-  out/                   导出（gitignore）
+启动.bat / run.cmd
+ui.py
+engine.py
+config.example.json
+assets/
+tools/httpx.exe
+tools/curl.exe
+tools/lib/fofa_api.py
+tools/lib/domain_icp.py
+out/
 ```
 
-## 说明
-
-- 公司名 → 根域只走 `GET https://icplishi.com/company/{urlencoded 全称}/`
-- Clash TUN 若把 `icplishi.com` 解析成 `198.18.0.0/15`，引擎用阿里 / 360 DoH 拿真 IP，再 `curl --http1.1 --resolve`
-- 探活不走代理
-- `config.json`、排查结果不要进 git，见 `.gitignore`
+公司名反查根域走 `https://icplishi.com/company/{公司全称}/`。
 
 ## 作者
 
@@ -203,24 +138,4 @@ TwinTitle/
 
 所谓的大佬，一辈子都以为自己是小白。
 
-## 更新日志
-
-见 [CHANGELOG.md](CHANGELOG.md)。
-
-### v1.1.0 — 2026-10-07
-
-- 标语 10 秒换一条，不滚动
-- FOFA 默认间隔 2 秒，探活/备案并发，改后缀不打 FOFA
-- 公司名称可批量；结果按公司 → 可疑分类分组
-
-### v1.0.0 — 2026-10-06
-
-- 首发 TwinTitle（同题猎手）
-- 公司全称 → icplishi 公开备案反查根域
-- 官网探活 + 标题 fuzz 像真站关键字
-- FOFA 精确 title / 关键字扩搜
-- httpx 探活；Clash TUN 假 IP 走 curl `--noproxy --resolve`
-- 像真站查 chinaz 备案；根域改后缀看是否注册
-- GUI：林神图标、滚动标语、by 林神、配置一键探测
-- 导出 xlsx 三张表（结果 / 分析 / 查询语句）
-- `config.json`（FOFA Key）不进仓库
+更新日志见 [CHANGELOG.md](CHANGELOG.md)。
