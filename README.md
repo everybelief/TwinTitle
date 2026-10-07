@@ -136,6 +136,6 @@ ICP reverse: `https://icplishi.com/company/{name}/`.
 
 **林神**
 
-所谓的大佬，一辈子都以为自己是小白.
+真正的大师永远怀着一颗学徒的心.
 
 Changelog: [CHANGELOG.md](CHANGELOG.md).
