@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Set
 from urllib.parse import quote, urlparse
 
-ROOT = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+    ROOT = Path(getattr(sys, "_MEIPASS", APP_DIR))
+else:
+    APP_DIR = Path(__file__).resolve().parent
+    ROOT = APP_DIR
 TOOLS_DIR = ROOT / "tools"
 LIB_DIR = TOOLS_DIR / "lib"
 sys.path.insert(0, str(LIB_DIR))
@@ -57,7 +62,7 @@ def _as_bool(value, default: bool = False) -> bool:
 
 def load_runtime() -> dict:
     cfg: dict = {}
-    cfg_path = ROOT / "config.json"
+    cfg_path = APP_DIR / "config.json"
     if cfg_path.is_file():
         try:
             cfg = json.loads(cfg_path.read_text(encoding="utf-8")) or {}
@@ -83,7 +88,7 @@ def load_runtime() -> dict:
 
 
 def save_runtime(updates: dict) -> dict:
-    path = ROOT / "config.json"
+    path = APP_DIR / "config.json"
     cfg: dict = {}
     if path.is_file():
         try:

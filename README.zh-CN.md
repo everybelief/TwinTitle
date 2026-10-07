@@ -14,6 +14,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/everybelief/TwinTitle/releases/latest"><b>下载 Windows exe</b></a>
+</p>
+
+<p align="center">
   <img src="assets/screenshot.png" alt="TwinTitle 运行界面">
 </p>
 
@@ -81,9 +85,10 @@ copy config.example.json config.json
 ```
 
 2. 在 `config.json` 填 FOFA Key（或打开软件点右上角 **配置**）。
-3. 双击 `启动.bat`（或 `run.cmd`）。
-4. 填 **公司名称**（全称）。根域 / URL / 关键字可空。
-5. 点 **开始排查**，结束后导出 xlsx。
+3. 不想装 Python：从 [Releases](https://github.com/everybelief/TwinTitle/releases/latest) 下 `TwinTitle.exe`，打开后点 **配置** 填 Key。
+4. 源码运行就双击 `启动.bat`（或 `run.cmd`）。
+5. 填 **公司名称**（全称）。根域 / URL / 关键字可空。
+6. 点 **开始排查**，结束后导出 xlsx。
 
 配置窗口可以一键探测 FOFA / 代理 / 备案反查是否有效。
 
@@ -173,6 +178,7 @@ TwinTitle/
   requirements.txt
   assets/linshen.ico     林神品牌图标
   assets/screenshot.png  运行截图
+  TwinTitle.spec         PyInstaller onefile
   tools/
     httpx.exe            批量探活（projectdiscovery 1.2.4）
     curl.exe             钉测绘 IP 探活（TUN 污染 DNS 时）

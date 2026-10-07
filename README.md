@@ -18,6 +18,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/everybelief/TwinTitle/releases/latest"><b>Download Windows exe</b></a>
+</p>
+
+<p align="center">
   <img src="assets/screenshot.png" alt="TwinTitle GUI">
 </p>
 
@@ -85,9 +89,10 @@ copy config.example.json config.json
 ```
 
 2. Put your FOFA key in `config.json` (or open the app → **配置**).
-3. Double-click `启动.bat` (or `run.cmd`).
-4. Fill **公司名称** (legal name). Root domains / URL / keywords can stay empty.
-5. Click **开始排查**. Export xlsx when done.
+3. Or skip Python: grab `TwinTitle.exe` from [Releases](https://github.com/everybelief/TwinTitle/releases/latest), put FOFA key in **配置**.
+4. Double-click `启动.bat` (or `run.cmd`) if you run from source.
+5. Fill **公司名称** (legal name). Root domains / URL / keywords can stay empty.
+6. Click **开始排查**. Export xlsx when done.
 
 Settings dialog also probes FOFA / proxy / ICP reverse so you know they work before a hunt.
 
@@ -175,6 +180,7 @@ TwinTitle/
   requirements.txt
   assets/linshen.ico     Brand icon (林神)
   assets/screenshot.png  GUI screenshot
+  TwinTitle.spec         PyInstaller onefile
   tools/
     httpx.exe            Live probe (projectdiscovery 1.2.4)
     curl.exe             Pin FOFA IP when TUN poisons DNS

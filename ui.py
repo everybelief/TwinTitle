@@ -15,6 +15,8 @@ from tkinter import BooleanVar, Button, Canvas, Frame, IntVar, Label, PhotoImage
 from tkinter.scrolledtext import ScrolledText
 
 from engine import (
+    APP_DIR,
+    ROOT as BUNDLE,
     HuntConfig,
     TitlePhishEngine,
     export_xlsx,
@@ -25,7 +27,8 @@ from engine import (
     tool_inventory,
 )
 
-HERE = Path(__file__).resolve().parent
+HERE = APP_DIR
+ASSETS = BUNDLE / "assets"
 CFG_PATH = HERE / "last_config.json"
 OUT_DIR = HERE / "out"
 SLOGANS = [
@@ -303,8 +306,8 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_icon(self) -> None:
-        ico = HERE / "assets" / "linshen.ico"
-        png = HERE / "assets" / "linshen32.png"
+        ico = ASSETS / "linshen.ico"
+        png = ASSETS / "linshen32.png"
         if ico.is_file():
             try:
                 self.root.iconbitmap(str(ico))
@@ -337,7 +340,7 @@ class App:
         brand.pack(fill="x")
         row = Frame(brand, bg="#121212")
         row.pack(fill="x", padx=12, pady=(8, 0))
-        png32 = HERE / "assets" / "linshen32.png"
+        png32 = ASSETS / "linshen32.png"
         if png32.is_file():
             try:
                 self._brand_icon = PhotoImage(file=str(png32))
